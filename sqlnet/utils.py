@@ -122,10 +122,18 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed, ret_vis_data=False):
 def to_batch_query(sql_data, idxes, st, ed):
     query_gt = []
     table_ids = []
+    original = []
     for i in range(st, ed):
+
         query_gt.append(sql_data[idxes[i]]['sql'])
         table_ids.append(sql_data[idxes[i]]['table_id'])
-    return query_gt, table_ids
+        original.append(sql_data[idxes[i]]['question'])
+        original.append(sql_data[idxes[i]]['query_tok'])
+        # print(sql_data[idxes[i]]['question'])
+        # print(sql_data[idxes[i]]['query_tok'])
+        # print(sql_data[idxes[i]]['question'])
+        # print(sql_data[idxes[i]]['query_tok'])
+    return query_gt, table_ids, original
 
 def epoch_train(model, optimizer, batch_size, sql_data, table_data, pred_entry):
     model.train()
@@ -142,7 +150,7 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, pred_entry):
         score = model.forward(q_seq, col_seq, col_num, pred_entry,
                 gt_where=gt_where_seq, gt_cond=gt_cond_seq, gt_sel=gt_sel_seq)
         loss = model.loss(score, ans_seq, pred_entry, gt_where_seq)
-        cum_loss += loss.data.cpu().numpy()[0]*(ed - st)
+        cum_loss += loss.data.cpu().numpy()*(ed - st)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -166,20 +174,30 @@ def epoch_exec_acc(model, batch_size, sql_data, table_data, db_path):
         raw_q_seq = [x[0] for x in raw_data]
         raw_col_seq = [x[1] for x in raw_data]
         gt_where_seq = model.generate_gt_where_seq(q_seq, col_seq, query_seq)
-        query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
+        query_gt, table_ids, original = to_batch_query(sql_data, perm, st, ed)
         gt_sel_seq = [x[1] for x in ans_seq]
         score = model.forward(q_seq, col_seq, col_num,
                 (True, True, True), gt_sel=gt_sel_seq)
         pred_queries = model.gen_query(score, q_seq, col_seq,
                 raw_q_seq, raw_col_seq, (True, True, True))
+        print("original",original)
+        print("---------------------------------------------------------")
+        print("table_ids",table_ids)
+        print("---------------------------------------------------------")
+        print("query_gt",query_gt)
+        print("---------------------------------------------------------")
+        print("pred_queries",pred_queries)
+        print("---------------------------------------------------------")
 
         for idx, (sql_gt, sql_pred, tid) in enumerate(
                 zip(query_gt, pred_queries, table_ids)):
             ret_gt = engine.execute(tid,
                     sql_gt['sel'], sql_gt['agg'], sql_gt['conds'])
+            # print(ret_gt)
             try:
                 ret_pred = engine.execute(tid,
                         sql_pred['sel'], sql_pred['agg'], sql_pred['conds'])
+                # print(ret_gt)
             except:
                 ret_pred = None
             tot_acc_num += (ret_gt == ret_pred)
@@ -200,12 +218,20 @@ def epoch_acc(model, batch_size, sql_data, table_data, pred_entry):
         q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq, raw_data = to_batch_seq(sql_data, table_data, perm, st, ed, ret_vis_data=True)
         raw_q_seq = [x[0] for x in raw_data]
         raw_col_seq = [x[1] for x in raw_data]
-        query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
+        query_gt, table_ids, original = to_batch_query(sql_data, perm, st, ed)
         gt_sel_seq = [x[1] for x in ans_seq]
         score = model.forward(q_seq, col_seq, col_num,
                 pred_entry, gt_sel = gt_sel_seq)
         pred_queries = model.gen_query(score, q_seq, col_seq,
                 raw_q_seq, raw_col_seq, pred_entry)
+        print("original",original)
+        print("---------------------------------------------------------")
+        print("table_ids",table_ids)
+        print("---------------------------------------------------------")
+        print("query_gt",query_gt)
+        print("---------------------------------------------------------")
+        print("pred_queries",pred_queries)
+        print("---------------------------------------------------------")
         one_err, tot_err = model.check_acc(raw_data,
                 pred_queries, query_gt, pred_entry)
 
@@ -214,6 +240,7 @@ def epoch_acc(model, batch_size, sql_data, table_data, pred_entry):
 
         st = ed
     return tot_acc_num / len(sql_data), one_acc_num / len(sql_data)
+
 
 def epoch_reinforce_train(model, optimizer, batch_size, sql_data, table_data, db_path):
     engine = DBEngine(db_path)

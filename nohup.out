@@ -1,0 +1,16 @@
+Loading from original dataset
+Loading data from data/train_tok.jsonl
+Loading data from data/train_tok.tables.jsonl
+Loading data from data/dev_tok.jsonl
+Loading data from data/dev_tok.tables.jsonl
+Loading data from data/test_tok.jsonl
+Loading data from data/test_tok.tables.jsonl
+Loading word embedding from glove/glove.42B.300d.txt
+Traceback (most recent call last):
+  File "train.py", line 49, in <module>
+    load_used=args.train_emb, use_small=USE_SMALL)
+  File "/mnt/vol_b/saif/SQLNet/sqlnet/utils.py", line 279, in load_word_emb
+    ret[info[0]] = np.array(map(lambda x:float(x), info[1:]))
+  File "/mnt/vol_b/saif/SQLNet/sqlnet/utils.py", line 279, in <lambda>
+    ret[info[0]] = np.array(map(lambda x:float(x), info[1:]))
+KeyboardInterrupt
