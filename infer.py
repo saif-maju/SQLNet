@@ -89,7 +89,7 @@ if args.train_emb:
     agg_m, sel_m, cond_m, agg_e, sel_e, cond_e = best_model_name(args)
 
 # load model
-agg_m, sel_m, cond_m = best_model_name(args, savedstr='_pretrain_wikisql')
+agg_m, sel_m, cond_m = best_model_name(args, savedstr='')
 print('==> best model names:', agg_m, sel_m, cond_m)
 print "Loading from %s"%agg_m
 model.agg_pred.load_state_dict(torch.load(agg_m))
@@ -125,19 +125,24 @@ print(tablestr)
 # print(inference('test question'))
 
 # start flask app
-if running in docker, must also create localhost tunnel by running the following from the home folder or wherever pagekite.py is
-python2 pagekite.py 5000 wronnyhuang.pagekite.me
-then you can do get, i.e., the table by going to https://wronnyhuang.pagekite.me/table
-@app.route('/', methods=['GET'])
-def get_sql():
-    english = request.args.get('english', default='', type=str)
-    return inference(english)
+# if running in docker, must also create localhost tunnel by running the following from the home folder or wherever pagekite.py is
+# python2 pagekite.py 5000 wronnyhuang.pagekite.me
+# then you can do get, i.e., the table by going to https://wronnyhuang.pagekite.me/table
+# @app.route('/', methods=['GET'])
+# def get_sql():
+#     english = request.args.get('english', default='', type=str)
+#     return inference(english)
     # return english
+# english = request.args.get('english', default='', type=str)
+english ="what is age of account number 1111?"
 
-@app.route('/table')
-def get_table():
-    return tablestr
+print(inference(english))
 
-if __name__ == '__main__':
-    app.run()
+
+# @app.route('/table')
+# def get_table():
+#     return tablestr
+
+# if __name__ == '__main__':
+#     app.run()
     

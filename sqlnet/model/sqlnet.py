@@ -368,7 +368,7 @@ class SQLNet(nn.Module):
                 cond_num_score,cond_col_score,cond_op_score,cond_str_score =\
                         [x.data.cpu().numpy() for x in cond_score]
                 cond_num = np.argmax(cond_num_score[b])
-                all_toks = ['<BEG>'] + q[b] + ['<END>']
+                all_toks = ['<BEG>'] + [q[b]] + ['<END>']
                 max_idxes = np.argsort(-cond_col_score[b])[:cond_num]
                 for idx in range(cond_num):
                     cur_cond = []
