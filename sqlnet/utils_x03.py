@@ -2,7 +2,12 @@ import json
 from lib.dbengine import DBEngine
 import re
 import numpy as np
+from subprocess import Popen, PIPE
+from time import sleep
 #from nltk.tokenize import StanfordTokenizer
+# from ewc import EWC, ewc_train, normal_train, test
+
+schema_re = re.compile(r'\((.+)\)')
 
 def load_data(sql_paths, table_paths, use_small=False):
     if not isinstance(sql_paths, list):
@@ -61,7 +66,15 @@ def load_dataset(dataset_id, use_small=False):
     return sql_data, table_data, val_sql_data, val_table_data,\
             test_sql_data, test_table_data, TRAIN_DB, DEV_DB, TEST_DB
 
-def best_model_name(args, for_load=False):
+
+def load_dataset_dummy(dataset_id, use_small=False, teststr=''):
+    if dataset_id == 0:
+        print "Loading from original dataset"
+        dummy_sql_data, dummy_table_data = load_data('mock/dummy_tok{}.jsonl'.format(teststr), 'mock/dummy_tok.tables.jsonl', use_small=use_small)
+    return dummy_sql_data, dummy_table_data
+
+
+def best_model_name(args, for_load=False, savedstr=''):
     new_data = 'new' if args.dataset > 0 else 'old'
     mode = 'seq2sql' if args.baseline else 'sqlnet'
     if for_load:
@@ -71,23 +84,22 @@ def best_model_name(args, for_load=False):
         use_rl = 'rl_' if args.rl else ''
     use_ca = '_ca' if args.ca else ''
 
-    agg_model_name = 'saved_model/%s_%s%s%s.agg_model'%(new_data,
+    agg_model_name = 'saved_model{}/%s_%s%s%s.agg_model'.format(savedstr)%(new_data,
             mode, use_emb, use_ca)
-    sel_model_name = 'saved_model/%s_%s%s%s.sel_model'%(new_data,
+    sel_model_name = 'saved_model{}/%s_%s%s%s.sel_model'.format(savedstr)%(new_data,
             mode, use_emb, use_ca)
-    cond_model_name = 'saved_model/%s_%s%s%s.cond_%smodel'%(new_data,
+    cond_model_name = 'saved_model{}/%s_%s%s%s.cond_%smodel'.format(savedstr)%(new_data,
             mode, use_emb, use_ca, use_rl)
 
     if not for_load and args.train_emb:
-        agg_embed_name = 'saved_model/%s_%s%s%s.agg_embed'%(new_data,
+        agg_embed_name = 'saved_model{}/%s_%s%s%s.agg_embed'.format(savedstr)%(new_data,
                 mode, use_emb, use_ca)
-        sel_embed_name = 'saved_model/%s_%s%s%s.sel_embed'%(new_data,
+        sel_embed_name = 'saved_model{}/%s_%s%s%s.sel_embed'.format(savedstr)%(new_data,
                 mode, use_emb, use_ca)
-        cond_embed_name = 'saved_model/%s_%s%s%s.cond_embed'%(new_data,
+        cond_embed_name = 'saved_model{}/%s_%s%s%s.cond_embed'.format(savedstr)%(new_data,
                 mode, use_emb, use_ca)
 
-        return agg_model_name, sel_model_name, cond_model_name,\
-                agg_embed_name, sel_embed_name, cond_embed_name
+        return agg_model_name, sel_model_name, cond_model_name, agg_embed_name, sel_embed_name, cond_embed_name
     else:
         return agg_model_name, sel_model_name, cond_model_name
 
@@ -122,18 +134,10 @@ def to_batch_seq(sql_data, table_data, idxes, st, ed, ret_vis_data=False):
 def to_batch_query(sql_data, idxes, st, ed):
     query_gt = []
     table_ids = []
-    original = []
     for i in range(st, ed):
-
         query_gt.append(sql_data[idxes[i]]['sql'])
         table_ids.append(sql_data[idxes[i]]['table_id'])
-        original.append(sql_data[idxes[i]]['question'])
-        original.append(sql_data[idxes[i]]['query_tok'])
-        # print(sql_data[idxes[i]]['question'])
-        # print(sql_data[idxes[i]]['query_tok'])
-        # print(sql_data[idxes[i]]['question'])
-        # print(sql_data[idxes[i]]['query_tok'])
-    return query_gt, table_ids, original
+    return query_gt, table_ids
 
 def epoch_train(model, optimizer, batch_size, sql_data, table_data, pred_entry):
     model.train()
@@ -142,19 +146,18 @@ def epoch_train(model, optimizer, batch_size, sql_data, table_data, pred_entry):
     st = 0
     while st < len(sql_data):
         ed = st+batch_size if st+batch_size < len(perm) else len(perm)
+        print('batch:', st, 'to', ed, 'of', len(sql_data))
 
-        q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq = \
-                to_batch_seq(sql_data, table_data, perm, st, ed)
+        q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq = to_batch_seq(sql_data, table_data, perm, st, ed)
         gt_where_seq = model.generate_gt_where_seq(q_seq, col_seq, query_seq)
         gt_sel_seq = [x[1] for x in ans_seq]
-        score = model.forward(q_seq, col_seq, col_num, pred_entry,
-                gt_where=gt_where_seq, gt_cond=gt_cond_seq, gt_sel=gt_sel_seq)
+        score = model.forward(q_seq, col_seq, col_num, pred_entry, gt_where=gt_where_seq, gt_cond=gt_cond_seq, gt_sel=gt_sel_seq)
         loss = model.loss(score, ans_seq, pred_entry, gt_where_seq)
-        cum_loss += loss.data.cpu().numpy()*(ed - st)
+        cum_loss += loss.data.cpu().numpy()[0]*(ed - st)
         optimizer.zero_grad()
+        loss = ewc_train(model, optimizer, (q_seq, col_seq), EWC(model), 1000)
         loss.backward()
         optimizer.step()
-
         st = ed
 
     return cum_loss / len(sql_data)
@@ -174,30 +177,20 @@ def epoch_exec_acc(model, batch_size, sql_data, table_data, db_path):
         raw_q_seq = [x[0] for x in raw_data]
         raw_col_seq = [x[1] for x in raw_data]
         gt_where_seq = model.generate_gt_where_seq(q_seq, col_seq, query_seq)
-        query_gt, table_ids, original = to_batch_query(sql_data, perm, st, ed)
+        query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
         gt_sel_seq = [x[1] for x in ans_seq]
         score = model.forward(q_seq, col_seq, col_num,
                 (True, True, True), gt_sel=gt_sel_seq)
         pred_queries = model.gen_query(score, q_seq, col_seq,
                 raw_q_seq, raw_col_seq, (True, True, True))
-        print("original",original)
-        print("---------------------------------------------------------")
-        print("table_ids",table_ids)
-        print("---------------------------------------------------------")
-        print("query_gt",query_gt)
-        print("---------------------------------------------------------")
-        print("pred_queries",pred_queries)
-        print("---------------------------------------------------------")
 
         for idx, (sql_gt, sql_pred, tid) in enumerate(
                 zip(query_gt, pred_queries, table_ids)):
             ret_gt = engine.execute(tid,
                     sql_gt['sel'], sql_gt['agg'], sql_gt['conds'])
-            # print(ret_gt)
             try:
                 ret_pred = engine.execute(tid,
                         sql_pred['sel'], sql_pred['agg'], sql_pred['conds'])
-                # print(ret_gt)
             except:
                 ret_pred = None
             tot_acc_num += (ret_gt == ret_pred)
@@ -206,40 +199,182 @@ def epoch_exec_acc(model, batch_size, sql_data, table_data, db_path):
 
     return tot_acc_num / len(sql_data)
 
-def epoch_acc(model, batch_size, sql_data, table_data, pred_entry):
+# RONNY ADDED
+def infer_exec(model, batch_size, sql_data, table_data, db_path):
+    engine = DBEngine(db_path)
+    
+    model.eval()
+    perm = list(range(len(sql_data)))
+    tot_acc_num = 0.0
+    acc_of_log = 0.0
+    st = 0
+    while st < len(sql_data):
+        ed = st+batch_size if st+batch_size < len(perm) else len(perm)
+        q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq, raw_data = \
+            to_batch_seq(sql_data, table_data, perm, st, ed, ret_vis_data=True)
+        raw_q_seq = [x[0] for x in raw_data]
+        raw_col_seq = [x[1] for x in raw_data]
+        query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
+        gt_sel_seq = [x[1] for x in ans_seq]
+        
+        score = model.forward(q_seq, col_seq, col_num, (True, True, True), gt_sel=gt_sel_seq)
+        pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq, raw_col_seq, (True, True, True))
+        for idx, (sql_gt, sql_pred, tid) in enumerate(zip(query_gt, pred_queries, table_ids)):
+            print_table(table_data, tid)
+            raw_query = engine.get_query_raw(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'], table_data)
+            # ret_gt = engine.execute(tid, sql_gt['sel'], sql_gt['agg'], sql_gt['conds'])
+            # try:
+            #     ret_pred = engine.execute(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'])
+            # except:
+            #     ret_pred = None
+            # isCorrect = (ret_gt == ret_pred)
+            print "==> Here's an example"
+            print 'English: ', raw_q_seq[0]
+            print 'SQL: ', raw_query
+            # print 'Execution: ', str(ret_pred[0]).encode('utf-8') if ret_pred else 'null'
+            # print 'Correct: ', isCorrect
+            print '\n'
+            break
+
+        # INFERENCE TIME!
+        print '==> Your turn, type a question about this table'
+        raw_q_seq, q_seq = input_tokenize_wrapper()
+        raw_q_seq = raw_q_seq.decode('utf-8')
+        q_seq = [w.decode('utf-8') for w in q_seq]
+        raw_q_seq, q_seq = [raw_q_seq, raw_q_seq], [q_seq, q_seq]
+        score = model.forward(q_seq, col_seq, col_num, (True, True, True), gt_sel=gt_sel_seq)
+        pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq, raw_col_seq, (True, True, True))
+        for idx, (sql_pred, tid) in enumerate(zip(pred_queries, table_ids)):
+            raw_query = engine.get_query_raw(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'], table_data, lower=True)
+            # try:
+            #     ret_pred = engine.execute(tid, sql_pred['sel'], sql_pred['agg'], sql_pred['conds'])
+            # except:
+            #     ret_pred = '<Failed>'
+            print 'ENGLISH: ', raw_q_seq[0]
+            print 'SQL: ', raw_query
+            # print 'Execution: ', str(ret_pred[0]).encode('utf-8') if ret_pred else 'null'
+            print '\n\n'
+            break
+        st += 1
+        sleep(5)
+      
+# RONNY ADDED
+def get_table(table_data, tid):
+    table = table_data[tid]
+    p = []
+    p.append('-' * 80)
+    p.append('\n')
+    p.append('TABLE {}'.format(tid))
+    p.append(table['page_title'])
+    p.append(table['section_title'])
+    p.append('\t'.join(table['header']).expandtabs(34))
+    for row in table['rows']:
+        p.append('\t'.join(row).expandtabs(34))
+    p.append('\n')
+    return '\n'.join(p)
+
+# RONNY ADDED
+def input_tokenize_wrapper(english):
+    # raw_q = input('English: ')
+    raw_q = english
+    with open('input_question.txt', 'w') as f:
+        f.write(raw_q)
+    process = Popen('/opt/conda/bin/python input_tokenize_py3.py ', shell=True, stdout=PIPE, stderr=PIPE)
+    process.wait()
+    output, err = process.communicate()
+    print(output)
+    return raw_q, output
+
+def epoch_acc(model, batch_size, sql_data, table_data, pred_entry, write=False, experiment=None, epoch=0):
     model.eval()
     perm = list(range(len(sql_data)))
     st = 0
     one_acc_num = 0.0
     tot_acc_num = 0.0
+    f = open('saved_model/mc.results', 'w')
     while st < len(sql_data):
         ed = st+batch_size if st+batch_size < len(perm) else len(perm)
 
         q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq, raw_data = to_batch_seq(sql_data, table_data, perm, st, ed, ret_vis_data=True)
         raw_q_seq = [x[0] for x in raw_data]
         raw_col_seq = [x[1] for x in raw_data]
-        query_gt, table_ids, original = to_batch_query(sql_data, perm, st, ed)
+        query_gt, table_ids = to_batch_query(sql_data, perm, st, ed)
         gt_sel_seq = [x[1] for x in ans_seq]
-        score = model.forward(q_seq, col_seq, col_num,
-                pred_entry, gt_sel = gt_sel_seq)
-        pred_queries = model.gen_query(score, q_seq, col_seq,
-                raw_q_seq, raw_col_seq, pred_entry)
-        print("original",original)
-        print("---------------------------------------------------------")
-        print("table_ids",table_ids)
-        print("---------------------------------------------------------")
-        print("query_gt",query_gt)
-        print("---------------------------------------------------------")
-        print("pred_queries",pred_queries)
-        print("---------------------------------------------------------")
-        one_err, tot_err = model.check_acc(raw_data,
-                pred_queries, query_gt, pred_entry)
-
+        score = model.forward(q_seq, col_seq, col_num, pred_entry, gt_sel = gt_sel_seq)
+        pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq, raw_col_seq, pred_entry)
+        one_err, tot_err = model.check_acc(raw_data, pred_queries, query_gt, pred_entry)
+        
+        # formatted = format_preds(raw_q_seq, raw_col_seq, pred_queries)
+        # if epoch is not None and not epoch % 10:
+        #     for line in formatted.split('\n'):
+        #         print(line)
+        #         if bool(write):
+        #             f.write(line + '\n')
+                    
         one_acc_num += (ed-st-one_err)
         tot_acc_num += (ed-st-tot_err)
-
         st = ed
+        
+    # if experiment is not None:
+    #     experiment.set_step(epoch)
+    #     experiment.log_asset(f, file_name='mc_results-' + write)
+    f.close()
     return tot_acc_num / len(sql_data), one_acc_num / len(sql_data)
+
+def make_pred(model, sql_data, table_data, pred_entry=[True, True, True]):
+    model.eval()
+    perm = list(range(len(sql_data)))
+    q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq, raw_data = to_batch_seq(sql_data, table_data, perm, 0, 2, ret_vis_data=True)
+    raw_q_seq = [x[0] for x in raw_data]
+    raw_col_seq = [x[1] for x in raw_data]
+    query_gt, table_ids = to_batch_query(sql_data, perm, 0, 2)
+    gt_sel_seq = [x[1] for x in ans_seq]
+    score = model.forward(q_seq, col_seq, col_num, pred_entry, gt_sel = gt_sel_seq)
+    pred_queries = model.gen_query(score, q_seq, col_seq, raw_q_seq, raw_col_seq, pred_entry)
+    
+    formatted = format_preds(raw_q_seq, raw_col_seq, pred_queries)
+    return formatted
+    
+# RONNY ADDED
+def format_preds(raw_q_seq, raw_col_seq, pred_queries):
+    
+    agg_ops = ['', 'MAX', 'MIN', 'COUNT', 'SUM', 'AVG']
+    cond_ops = ['EQL', 'GT', 'LT', 'OP']
+    
+    res= []
+    for i in range(len(pred_queries)):
+        # initialize output string
+        out = ['SELECT']
+        
+        # select clause
+        selcol = raw_col_seq[i][pred_queries[i]['sel']]
+        if pred_queries[i]['agg'] != 0:
+            sel = agg_ops[pred_queries[i]['agg']] + '(' + selcol + ')'
+        else:
+            sel = selcol
+        out.append(sel)
+        
+        # from clause
+        out.append('FROM mock_time_machine')
+        
+        # where clause
+        out.append('WHERE')
+        for j, cond in enumerate(pred_queries[i]['conds']):
+            if j != 0:
+                out.append('AND')
+            wherecol = raw_col_seq[i][cond[0]]
+            whereop = cond_ops[cond[1]]
+            whereval = cond[2]
+            out.append(wherecol)
+            out.append(whereop)
+            out.append(whereval)
+            
+        # write to file
+        res.append(raw_q_seq[i].replace('\n', '') + ', ' + ' '.join(out) + '\n')
+
+    res.append('\n\n')
+    res= ''.join(res)
+    return res
 
 
 def epoch_reinforce_train(model, optimizer, batch_size, sql_data, table_data, db_path):
