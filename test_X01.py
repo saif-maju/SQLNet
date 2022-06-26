@@ -14,7 +14,7 @@ if __name__ == '__main__':
             help='If set, use small data; used for fast debugging.')
     parser.add_argument('--ca', action='store_true',
             help='Use conditional attention.')
-    parser.add_argument('--dataset', type=int, default=1,
+    parser.add_argument('--dataset', type=int, default=0,
             help='0: original dataset, 1: re-split dataset')
     parser.add_argument('--rl', action='store_true',
             help='Use RL for Seq2SQL.')
@@ -36,20 +36,10 @@ if __name__ == '__main__':
         BATCH_SIZE=64
     TEST_ENTRY=(True, True, True)  # (AGG, SEL, COND)
 
-
-    # with open('./data_resplit/test.jsonl', 'r') as json_file:
-    #   json_list = list(json_file)
-
-    # if len(json_list) < 64:
-    #   for i in range(0,63):
-    #     json_list.append(json_list[0])
-    #   with open('./data_resplit/test.jsonl', 'w') as json_file:
-    #     json_file.write('\n'.join(map(str, json_list))) 
-
-#     sql_data, table_data, val_sql_data, val_table_data, test_sql_data, test_table_data, TRAIN_DB, DEV_DB, TEST_DB = load_dataset(args.dataset, use_small=USE_SMALL)
-    test_sql_data, test_table_data,  TEST_DB = load_dataset(args.dataset, test_only=True , use_small=USE_SMALL)
-#     print("test_sql_data",test_sql_data)
-
+    sql_data, table_data, val_sql_data, val_table_data, \
+            test_sql_data, test_table_data, \
+            TRAIN_DB, DEV_DB, TEST_DB = load_dataset(
+                    args.dataset, use_small=USE_SMALL)
 
     word_emb = load_word_emb('glove/glove.%dB.%dd.txt'%(B_word,N_word), \
         load_used=True, use_small=USE_SMALL) # load_used can speed up loading
@@ -83,12 +73,11 @@ if __name__ == '__main__':
         print "Loading from %s"%cond_m
         model.cond_pred.load_state_dict(torch.load(cond_m))
 
-    infer(model, BATCH_SIZE, test_sql_data, test_table_data, TEST_ENTRY)        
-    # print "Dev acc_qm: %s;\n  breakdown on (agg, sel, where): %s"%epoch_acc(
-    #         model, BATCH_SIZE, val_sql_data, val_table_data, TEST_ENTRY)
-    # print "Dev execution acc: %s"%epoch_exec_acc(
-    #         model, BATCH_SIZE, val_sql_data, val_table_data, DEV_DB)
-#     print "Test acc_qm: %s;\n  breakdown on (agg, sel, where): %s"%epoch_acc(
-#             model, BATCH_SIZE, test_sql_data, test_table_data, TEST_ENTRY)
-#     print "Test execution acc: %s"%epoch_exec_acc(
-#             model, BATCH_SIZE, test_sql_data, test_table_data, TEST_DB)
+    print "Dev acc_qm: %s;\n  breakdown on (agg, sel, where): %s"%epoch_acc(
+            model, BATCH_SIZE, val_sql_data, val_table_data, TEST_ENTRY)
+    print "Dev execution acc: %s"%epoch_exec_acc(
+            model, BATCH_SIZE, val_sql_data, val_table_data, DEV_DB)
+    print "Test acc_qm: %s;\n  breakdown on (agg, sel, where): %s"%epoch_acc(
+            model, BATCH_SIZE, test_sql_data, test_table_data, TEST_ENTRY)
+    print "Test execution acc: %s"%epoch_exec_acc(
+            model, BATCH_SIZE, test_sql_data, test_table_data, TEST_DB)

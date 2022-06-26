@@ -19,10 +19,9 @@ def load_data(sql_paths, table_paths, use_small=False):
             for idx, line in enumerate(inf):
                 if use_small and idx >= 1000:
                     break
-                sql = json.loads(line)
+                sql = json.loads(line.strip())
                 sql_data.append(sql)
-    sql_data = [sql_data[0] for _ in range(64)]
-    
+
     for TABLE_PATH in table_paths:
         print "Loading data from %s"%TABLE_PATH
         with open(TABLE_PATH) as inf:
@@ -35,7 +34,7 @@ def load_data(sql_paths, table_paths, use_small=False):
 
     return sql_data, table_data
 
-def load_dataset(dataset_id, test_only=True, use_small=False):
+def load_dataset(dataset_id, use_small=False):
     if dataset_id == 0:
         print "Loading from original dataset"
         sql_data, table_data = load_data('data/train_tok.jsonl',
@@ -48,26 +47,18 @@ def load_dataset(dataset_id, test_only=True, use_small=False):
         DEV_DB = 'data/dev.db'
         TEST_DB = 'data/test.db'
     else:
-        if test_only: 
-            test_sql_data, test_table_data = load_data('data_resplit/test.jsonl',
-                'data_resplit/tables.jsonl', use_small=use_small) 
-
-            TEST_DB = 'data_resplit/table.db'
-            return test_sql_data, test_table_data,  TEST_DB
-
-
-        else:     
-            print "Loading from re-split dataset"
-            sql_data, table_data = load_data('data_resplit/train.jsonl',
+        print "Loading from re-split dataset"
+        sql_data, table_data = load_data('data_resplit/train.jsonl',
                 'data_resplit/tables.jsonl', use_small=use_small)
-            val_sql_data, val_table_data = load_data('data_resplit/dev.jsonl',
+        val_sql_data, val_table_data = load_data('data_resplit/dev.jsonl',
                 'data_resplit/tables.jsonl', use_small=use_small)
-            test_sql_data, test_table_data = load_data('data_resplit/test.jsonl',
+        test_sql_data, test_table_data = load_data('data_resplit/test.jsonl',
                 'data_resplit/tables.jsonl', use_small=use_small)
-            TRAIN_DB = 'data_resplit/table.db'
-            DEV_DB = 'data_resplit/table.db'
-            TEST_DB = 'data_resplit/table.db'
-            return sql_data, table_data, val_sql_data, val_table_data,\
+        TRAIN_DB = 'data_resplit/table.db'
+        DEV_DB = 'data_resplit/table.db'
+        TEST_DB = 'data_resplit/table.db'
+
+    return sql_data, table_data, val_sql_data, val_table_data,\
             test_sql_data, test_table_data, TRAIN_DB, DEV_DB, TEST_DB
 
 def best_model_name(args, for_load=False):
@@ -189,30 +180,29 @@ def epoch_exec_acc(model, batch_size, sql_data, table_data, db_path):
                 (True, True, True), gt_sel=gt_sel_seq)
         pred_queries = model.gen_query(score, q_seq, col_seq,
                 raw_q_seq, raw_col_seq, (True, True, True))
-        break
-        # for idx, (sql_gt, sql_pred, tid) in enumerate(
-        #         zip(query_gt, pred_queries, table_ids)):
-        #     ret_gt = engine.execute(tid,
-        #             sql_gt['sel'], sql_gt['agg'], sql_gt['conds'])
-        #     # print(ret_gt)
-        #     try:
-        #         ret_pred = engine.execute(tid,
-        #                 sql_pred['sel'], sql_pred['agg'], sql_pred['conds'])
-        #         # print(ret_gt)
-        #     except:
-        #         ret_pred = None
-        #     tot_acc_num += (ret_gt == ret_pred)
+        print("original",original)
+        print("---------------------------------------------------------")
+        print("table_ids",table_ids)
+        print("---------------------------------------------------------")
+        print("query_gt",query_gt)
+        print("---------------------------------------------------------")
+        print("pred_queries",pred_queries)
+        print("---------------------------------------------------------")
+
+        for idx, (sql_gt, sql_pred, tid) in enumerate(
+                zip(query_gt, pred_queries, table_ids)):
+            ret_gt = engine.execute(tid,
+                    sql_gt['sel'], sql_gt['agg'], sql_gt['conds'])
+            # print(ret_gt)
+            try:
+                ret_pred = engine.execute(tid,
+                        sql_pred['sel'], sql_pred['agg'], sql_pred['conds'])
+                # print(ret_gt)
+            except:
+                ret_pred = None
+            tot_acc_num += (ret_gt == ret_pred)
         
         st = ed
-    # print("original",original)
-    # print("---------------------------------------------------------")
-    # print("table_ids",table_ids)
-    # print("---------------------------------------------------------")
-    # print("query_gt",query_gt)
-    # print("---------------------------------------------------------")
-    # print("pred_queries",pred_queries)
-    # print("---------------------------------------------------------")
-
 
     return tot_acc_num / len(sql_data)
 
@@ -250,25 +240,6 @@ def epoch_acc(model, batch_size, sql_data, table_data, pred_entry):
 
         st = ed
     return tot_acc_num / len(sql_data), one_acc_num / len(sql_data)
-
-def infer(model, batch_size, sql_data, table_data, pred_entry):
-    model.eval()
-    # print('after eval')
-    perm = list(range(len(sql_data)))
-    st=0
-    ed = st+batch_size if st+batch_size < len(perm) else len(perm)
-    # print('perm: ',perm)
-    q_seq, col_seq, col_num, ans_seq, query_seq, gt_cond_seq, raw_data = to_batch_seq(sql_data, table_data, perm, st, ed, ret_vis_data=True)
-    raw_q_seq = [x[0] for x in raw_data]
-    raw_col_seq = [x[1] for x in raw_data]
-    query_gt, table_ids, original = to_batch_query(sql_data, perm, st, ed)
-    gt_sel_seq = [x[1] for x in ans_seq]
-    score = model.forward(q_seq, col_seq, col_num,
-            pred_entry, gt_sel = gt_sel_seq)
-    pred_queries = model.gen_query(score, q_seq, col_seq,
-            raw_q_seq, raw_col_seq, pred_entry)
-    print(pred_queries[0])
-
 
 
 def epoch_reinforce_train(model, optimizer, batch_size, sql_data, table_data, db_path):
